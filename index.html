@@ -82,7 +82,7 @@ let ENC=null;
 let PASS=null;
 let LASTSYNC=null;
 const BHUP_PIN="2611", MASK="••••••", BHUP_ID="FEBM303";
-const VERSION="v9.1";
+const VERSION="v10";
 const DATA_AS_OF = "12 Aug 2026";
 const asOfStr=()=>DATA&&DATA.asOf?fdate(DATA.asOf):DATA_AS_OF;
 
@@ -145,6 +145,58 @@ fetch('manifest.json').then(r=>r.json()).then(m=>{
  document.querySelectorAll('.applogo').forEach(el=>{el.innerHTML=`<img src="${LOGO}" alt="logo" style="width:100%;height:100%;object-fit:cover;display:block">`});
 }).catch(()=>{});
 const logoBox=()=>LOGO?`<img src="${LOGO}" alt="logo" style="width:100%;height:100%;object-fit:cover;display:block">`:'T';
+/* ---------- Smart Assistant (sab offline — data bahar nahi jata) ---------- */
+let ASKLOG=[];
+const MONTHW={jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12};
+function qNorm(s){return ' '+s.toLowerCase().replace(/[?.,!₹"']/g,' ').replace(/\s+/g,' ').trim()+' '}
+function qEmp(q){let best=null;DATA.employees.forEach(e=>{const parts=e.name.toLowerCase().split(' ').filter(w=>w.length>=3);parts.push(e.id.toLowerCase());parts.forEach(p=>{if(q.includes(' '+p+' ')||q.includes(' '+p.slice(0,Math.max(4,p.length-1))+' ')){if(!best||p.length>best.len)best={e,len:p.length}}})});return best?best.e:null}
+function qMonth(q){for(const w in MONTHW){if(q.includes(' '+w+' '))return '2026-'+String(MONTHW[w]).padStart(2,'0')}
+if(/ (is|this) month /.test(q)){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
+if(/ (pichhle|pichle|last) month /.test(q)){const d=new Date();d.setMonth(d.getMonth()-1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
+return null}
+const has=(q,words)=>words.some(w=>q.includes(' '+w+' '));
+function ansCard(t){return `<div style="background:var(--panelAlt);border-radius:12px;padding:11px 14px;font-size:13.5px;line-height:1.65">${t}</div>`}
+function lockAns(){return ansCard('🔒 Bhupendra ka data private hai — header ke <b>Bhupendra</b> button se PIN daal ke unlock karo, phir poochho.')}
+function answerQuery(raw){
+const q=qNorm(raw);
+if(has(q,['help','madad','kya pooch','kya puch','examples']))return ansCard('Aise poochho: <b>Jitendra ka balance</b> · <b>July me kitna paid hua</b> · <b>total kitna dena hai</b> · <b>is month kitna cash chahiye</b> · <b>Priyanka kab settle hogi</b> · <b>kiska advance hai</b> · <b>Harshit ko July me kitna diya</b>');
+const emp=qEmp(q), mk=qMonth(q);
+const wantPaid=has(q,['paid','diya','diye','payment','mila','pay']),wantAcc=has(q,['accrued','bana','bani','cost','kharcha','kharch']),wantBal=has(q,['balance','baki','baaki','due','dena','bacha']),wantSal=has(q,['salary','tankha']);
+/* person + month */
+if(emp&&mk){if(hideB(emp.id))return lockAns();
+ let p=0,a=0;DATA.ledger.forEach(t=>{if(t.empId===emp.id&&t.month===mk){t.direction==='-'?p+=Math.abs(t.amount):a+=Math.abs(t.amount)}});
+ return ansCard(`<b>${esc(emp.name)} — ${mlabel(mk)}</b><br>Paid (diya): <b style="color:var(--primary)">${inr(p)}</b> · Accrued (bana): <b style="color:var(--blue)">${inr(a)}</b>`)}
+/* person */
+if(emp){if(hideB(emp.id))return lockAns();
+ const s=STATS[emp.id];
+ if(wantSal&&emp.baseSalary)return ansCard(`<b>${esc(emp.name)}</b> ki salary: <b>${inr(emp.baseSalary)}/month</b> (${emp.type})`);
+ if(has(q,['phone','number','contact']))return ansCard(`<b>${esc(emp.name)}</b>: ${esc(emp.phone||'—')}`);
+ if(has(q,['bank','account','ifsc','khata']))return ansCard(`<b>${esc(emp.name)}</b><br>Bank: ${esc(emp.bankName||'—')} · A/C: ${esc(emp.accountNumber||'—')} · IFSC: ${esc(emp.ifsc||'—')}`);
+ if(has(q,['settle','settlement','kab tak'])&&s.bal>0){const m=Math.ceil(s.bal/18000);return ansCard(`<b>${esc(emp.name)}</b> ka due ${inr(s.bal)} hai — ₹18,000/month ke hisaab se <b>~${m} month</b> lagenge.`)}
+ if(wantPaid&&!wantBal){const last=DATA.ledger.filter(t=>t.empId===emp.id&&t.direction==='-').sort((x,y)=>(y.date||'').localeCompare(x.date||''))[0];
+  return ansCard(`<b>${esc(emp.name)}</b> ko ab tak total <b style="color:var(--primary)">${inr(s.paid)}</b> diya gaya hai.${last?` Aakhri payment: ${inr(last.amount)} (${fdate(last.date)})`:''}`)}
+ if(wantAcc&&!wantBal)return ansCard(`<b>${esc(emp.name)}</b> ka ab tak total accrued (bana): <b style="color:var(--blue)">${inr(s.acc)}</b>`);
+ const st=Math.round(s.bal)===0?'<b style="color:var(--green)">Settled ✓</b>':s.bal>0?`<b style="color:var(--red)">Due ${inr(s.bal)}</b> (company ko dena hai)`:`<b style="color:var(--green)">Advance ${inr(-s.bal)}</b> (usne zyada le rakha hai)`;
+ return ansCard(`<b>${esc(emp.name)}</b> (${emp.id} · ${emp.type}${emp.status==='Inactive'?' · Inactive':''})<br>Opening ${inr(s.open)} + Accrued ${inr(s.acc)} − Paid ${inr(s.paid)}<br>Status: ${st}`)}
+/* cash / upcoming (month se pehle — "is month kitna cash" jaise sawaal) */
+if(has(q,['cash','lagega','chahiye','upcoming','aane'])){const up=DATA.upcoming||[];const cash=up.filter(u=>u.cash).reduce((s,u)=>s+(+u.amount||0),0);
+ const rows=up.map(u=>hideB(u.empId)?`• ${esc(u.empName)}: 🔒`:`• ${esc(u.empName)}: ${inr(u.amount)}${u.cash?'':' (no cash)'}`).join('<br>');
+ return ansCard(`<b>Cash ready rakhna: ${inr(cash)}</b><br>${rows||'Koi upcoming payment nahi.'}`)}
+/* month only */
+if(mk){const m=MONTHLY.find(x=>x.mk===mk);if(!m)return ansCard(`${mlabel(mk)} ka koi record nahi hai.`);
+ return ansCard(`<b>${mlabel(mk)}</b><br>Accrued: <b style="color:var(--blue)">${inr(m.acc)}</b> · Paid: <b style="color:var(--primary)">${inr(m.paid)}</b><br>Closing balance: <b>${inr(m.close)}</b> (${m.n} transactions)`)}
+/* advance */
+if(has(q,['advance'])){const adv=DATA.employees.filter(e=>Math.round(STATS[e.id].bal)<0);
+ if(!adv.length)return ansCard('Kisi ka advance nahi hai.');
+ return ansCard('<b>Advance (zyada liya hua):</b><br>'+adv.map(e=>hideB(e.id)?`• ${esc(e.name)}: 🔒`:`• ${esc(e.name)}: ${inr(-STATS[e.id].bal)}`).join('<br>'))}
+/* dues / totals */
+if(has(q,['total','net','sab','kitna dena','kiska due','dues','sabse'])||wantBal){
+ let net=0;DATA.employees.forEach(e=>net+=STATS[e.id].bal);
+ const dues=DATA.employees.filter(e=>Math.round(STATS[e.id].bal)>0).sort((a,b)=>STATS[b.id].bal-STATS[a.id].bal);
+ return ansCard(`<b>Net company due: ${inr(net)}</b><br>`+dues.map(e=>hideB(e.id)?`• ${esc(e.name)}: 🔒 hidden`:`• ${esc(e.name)}: ${inr(STATS[e.id].bal)}`).join('<br>'))}
+if(wantPaid){let p=0;DATA.ledger.forEach(t=>{if(t.direction==='-')p+=Math.abs(t.amount)});return ansCard(`Ab tak total paid (YTD): <b style="color:var(--primary)">${inr(p)}</b>`)}
+if(has(q,['staff','kitne log','employees'])){const act=DATA.employees.filter(e=>e.status==='Active');return ansCard(`Staff: <b>${DATA.employees.length}</b> total · <b>${act.length}</b> active (Fixed ${act.filter(e=>e.type==='Fixed').length} · Freelance ${act.filter(e=>e.type==='Freelance').length})`)}
+return ansCard(`Ye samajh nahi aaya. Simple poochho — jaise <b>"Jitendra ka balance"</b> ya <b>"July me kitna paid"</b>. Complex sawaal ke liye Claude ko chat mein bolo — wo poora analysis karke dega.`)}
 setInterval(()=>{if(document.visibilityState==='visible')checkUpdate(false)},60000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkUpdate(false)});
 
@@ -167,6 +219,11 @@ const A={
 go(t){S.tab=t;render();window.scrollTo(0,0)},
 async tryApp(){const v=document.getElementById('apppin').value;try{const d=await decryptData(v);initData(d);S.unlocked=true;S.pinErr=false;PASS=v;LASTSYNC=new Date()}catch(e){S.pinErr=true}render()},
 refreshData(){checkUpdate(true)},
+askQ(){const el=document.getElementById('askin');if(!el||!el.value.trim())return;const v=el.value.trim();
+ ASKLOG.push({q:v,a:answerQuery(v)});render();
+ const box=document.getElementById('asklog');if(box)box.scrollTop=box.scrollHeight;
+ const inp=document.getElementById('askin');if(inp){inp.value='';inp.focus()}},
+askChip(v){const inp=document.getElementById('askin');if(inp){inp.value=v;A.askQ()}},
 tryBhup(){const v=document.getElementById('bpin').value;if(v===BHUP_PIN){S.bhup=true;S.pinErr=false;S.modal='bhupnote'}else{S.pinErr=true}render()},
 bhupBtn(){S.pinErr=false;S.modal=S.bhup?'bhupnote':'bhuppin';render()},
 hideBhup(){S.bhup=false;render()},
@@ -210,6 +267,7 @@ function header(){return `
   <div><div class="htitle disp">Teckno Salary Tracker <span class="badge" style="background:var(--teal);color:#06302b;vertical-align:middle">${VERSION}</span></div>
   <div class="hsub">FY 2026 · ${DATA.employees.length} staff · ${DATA.ledger.length} txns · data: ${asOfStr()}<span id="synct" style="margin-left:7px;color:var(--teal)">${syncLabel()}</span></div></div>
   <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+   <button class="hbtn" title="Assistant" onclick="A.modal('ask')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg> Ask</button>
    <button class="hbtn" title="Refresh data" onclick="A.refreshData()"><svg id="syncIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button>
    <button class="hbtn" onclick="A.bhupBtn()">${S.bhup?svgNote():svgLock()} Bhupendra</button>
    ${S.bhup?`<button class="hbtn" title="Hide" onclick="A.hideBhup()"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61"/></svg></button>`:''}
@@ -496,7 +554,7 @@ const RULES=[
 {title:"Priyanka — Special Case",color:"#df3f66",items:["Priyanka (Inactive) ko har mahine ₹18,000 payment jayega jab tak uska account settle na ho (2 Aug 2026 se; pehle ₹15,000 tha).","Uska poora due kabhi ek saath Upcoming mein nahi dalega — sirf ₹18,000/month."]},
 {title:"Transfer Through Others",color:"#0e9d6a",items:["Jab paisa kisi ek bande ke through doosre ko jaaye (company ki taraf se), sirf actual beneficiary ka account badlega.","Beech wala bande (conduit) ka balance nahi chhedega — woh sirf transfer ka zariya hai."]},
 {title:"Bhupendra — Privacy & Alag Note",color:"#0e1626",items:["Bhupendra ki saari salary/amounts pure tracker mein by default HIDDEN rehti hain (Staff, Payments, Upcoming, Dashboard — sab jagah •••••• masked).","Header ke 'Bhupendra' (lock) button se PIN daal ke hi uska data reveal hota hai.","Reveal ke baad: 30 second tak koi activity na ho (click/scroll/type/mouse) toh data apne aap wapas hide ho jata hai. Activity pe timer reset.","Manual hide ke liye eye-off button bhi hai.","Bhupendra ka ek ALAG note hai (sirf uske PIN se) — main tracker se alag, manual. Salary ₹1,50,000 vs jo amount uske paas aaya, pending dikhata hai.","Bhupendra ka koi bhi payment DONO jagah add hota hai — main ledger + alag note.","Bhupendra ko har month full salary ka payment lagta rahega (advance hone par bhi) jab tak Sir ji na bolein.","WhatsApp monthly summary mein Bhupendra kabhi nahi aata."]},
-{title:"Data & Maintenance",color:"#647184",items:["Ye viewer read-only hai — master data Claude (Cowork) ke paas ek file mein hai, audit-verified.","Auto-update: tracker har minute + window pe wapas aate hi naya data khud check karta hai. Header ka ⟳ button turant check karta hai.","Sir ji UI mein khud edit nahi karte — update Claude ko chat mein batate hain, Claude data file update karke naya tracker bana deta hai.","Har update pe Claude balances recompute + audit karta hai — koi manual calculation nahi.","DATE RULE: Koi bhi entry/update se PEHLE Claude hamesha actual system date se cross-verify karega — conversation se assume nahi karega."]}];
+{title:"Data & Maintenance",color:"#647184",items:["Ye viewer read-only hai — master data Claude (Cowork) ke paas ek file mein hai, audit-verified.","Auto-update: tracker har minute + window pe wapas aate hi naya data khud check karta hai. Header ka ⟳ button turant check karta hai.","✨ Ask button: balance, months, dues, cash jaise sawaal tracker ke andar hi poochho — sab offline calculate hota hai. Complex sawaal Claude se chat mein.","Sir ji UI mein khud edit nahi karte — update Claude ko chat mein batate hain, Claude data file update karke naya tracker bana deta hai.","Har update pe Claude balances recompute + audit karta hai — koi manual calculation nahi.","DATE RULE: Koi bhi entry/update se PEHLE Claude hamesha actual system date se cross-verify karega — conversation se assume nahi karega."]}];
 
 function rulesModal(){return `<div class="overlay" onclick="A.modal(null)"><div class="modal" style="max-width:620px" onclick="event.stopPropagation()">
  <div style="display:flex;align-items:center;margin-bottom:12px"><div class="mtitle disp">Tracker Rules</div><button class="xbtn" onclick="A.modal(null)">×</button></div>
@@ -508,6 +566,21 @@ function rulesModal(){return `<div class="overlay" onclick="A.modal(null)"><div 
   <div style="padding-left:6px">${sec.items.map(it=>`<div style="display:flex;gap:9px;padding:4px 0">
    <span style="color:${sec.color};font-weight:700;flex-shrink:0">→</span><span style="font-size:13.5px;line-height:1.5">${it}</span></div>`).join('')}</div>
  </div>`).join('')}
+</div></div>`}
+
+function askModal(){
+const chips=['Total kitna dena hai','Is month kitna cash chahiye','Priyanka kab settle hogi','Kiska advance hai','July me kitna paid'];
+return `<div class="overlay" onclick="A.modal(null)"><div class="modal" style="max-width:560px" onclick="event.stopPropagation()">
+ <div style="display:flex;align-items:center;margin-bottom:2px"><div class="mtitle disp">✨ Assistant</div><button class="xbtn" onclick="A.modal(null)">×</button></div>
+ <div class="note" style="margin-bottom:12px">Data ke sawaal poochho — jawab yahin, turant, bina data bahar bheje. Complex kaam Claude se chat mein.</div>
+ <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${chips.map(c=>`<button class="chipbtn" style="font-size:12px;padding:6px 10px" onclick="A.askChip('${c}')">${c}</button>`).join('')}</div>
+ <div id="asklog" style="max-height:44vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
+ ${ASKLOG.map(x=>`<div style="align-self:flex-end;background:var(--ink);color:#fff;border-radius:14px 14px 4px 14px;padding:8px 13px;font-size:13.5px;max-width:85%">${esc(x.q)}</div><div style="align-self:stretch">${x.a}</div>`).join('')||'<div class="note" style="text-align:center;padding:14px 0">Upar ke buttons dabao ya khud type karo 👇</div>'}
+ </div>
+ <div style="display:flex;gap:8px">
+  <input id="askin" class="search" style="flex:1" placeholder="Jaise: Jitendra ka balance…" onkeydown="if(event.key==='Enter')A.askQ()">
+  <button class="savebtn" style="width:auto;margin-top:0;padding:0 18px" onclick="A.askQ()">Poochho</button>
+ </div>
 </div></div>`}
 
 function bhupPinModal(){return `<div class="overlay" onclick="A.modal(null)"><div class="modal" style="max-width:360px;text-align:center" onclick="event.stopPropagation()">
@@ -566,6 +639,7 @@ const y=window.scrollY||document.documentElement.scrollTop||0;
 if(!S.unlocked){app.innerHTML=lockScreen();const p=document.getElementById('apppin');if(p)p.focus();armTimers();return}
 let modal='';
 if(S.modal==='rules')modal=rulesModal();
+else if(S.modal==='ask')modal=askModal();
 else if(S.modal==='bhuppin')modal=bhupPinModal();
 else if(S.modal==='bhupnote')modal=bhupNoteModal();
 else if(S.modal==='statement')modal=stmtModal();
@@ -573,6 +647,7 @@ app.innerHTML=header()+`<div class="wrap" id="view">${view()}</div>
 <div class="footer">Read-only viewer · ${VERSION} · Data as of ${asOfStr()} · Audit-verified ✓<br>Update Claude ko chat mein batao — push hote hi tracker khud update ho jayega (har minute auto-check + ⟳ button).</div>`+modal;
 window.scrollTo(0,y);
 if(S.modal==='bhuppin'){const p=document.getElementById('bpin');if(p)p.focus()}
+if(S.modal==='ask'){const p=document.getElementById('askin');if(p)p.focus();const b=document.getElementById('asklog');if(b)b.scrollTop=b.scrollHeight}
 armTimers()}
 function view(){return S.tab==='dashboard'?dashboard():S.tab==='staff'?staff():S.tab==='ledger'?ledgerView():S.tab==='upcoming'?upcoming():S.tab==='insights'?insights():monthlyView()}
 function refreshView(focusId){const v=document.getElementById('view');if(!v)return render();
