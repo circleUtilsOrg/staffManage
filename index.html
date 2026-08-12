@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teckno Salary Tracker</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="theme-color" content="#0e1626">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=DM+Sans:wght@400;500;600;700&display=swap');
 :root{
@@ -66,6 +71,7 @@ input.search,select.sel{padding:9px 12px;border:1px solid var(--line);border-rad
 .note{font-size:12.5px;color:var(--sub)}
 .footer{text-align:center;font-size:11.5px;color:var(--faint);margin-top:28px;line-height:1.6}
 @media (max-width:640px){ .stat .val{font-size:20px} .mcell{width:92px} }
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -73,9 +79,12 @@ input.search,select.sel{padding:9px 12px;border:1px solid var(--line);border-rad
 <script>
 let DATA=null;
 let ENC=null;
+let PASS=null;
+let LASTSYNC=null;
 const BHUP_PIN="2611", MASK="••••••", BHUP_ID="FEBM303";
-const VERSION="v8";
+const VERSION="v9";
 const DATA_AS_OF = "12 Aug 2026";
+const asOfStr=()=>DATA&&DATA.asOf?fdate(DATA.asOf):DATA_AS_OF;
 
 const S={unlocked:false,tab:'dashboard',q:'',typeF:'All',statusF:'Active',openEmp:null,
 lEmp:'All',lMonth:'All',lType:'All',pSearch:'',pFrom:'',pTo:'',stmtEmp:null,
@@ -96,14 +105,39 @@ return Object.values(m).sort((a,b)=>a.mk.localeCompare(b.mk)).map(r=>{r.open=run
 let MONTHLY=[];
 let MONTHS=[];
 function initData(d){DATA=d;STATS={};d.employees.forEach(e=>STATS[e.id]=empStats(e));MONTHLY=rollup();MONTHS=[...new Set(d.ledger.map(t=>t.month).filter(Boolean))].sort().reverse();}
-async function decryptData(pass){
- if(!ENC){const r=await fetch('data.enc.json',{cache:'no-store'});if(!r.ok)throw new Error('fetch');ENC=await r.json();}
+async function decryptObj(pass,e){
  const b=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
  const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pass),'PBKDF2',false,['deriveKey']);
- const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b(ENC.salt),iterations:ENC.iter,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
- const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b(ENC.iv)},key,b(ENC.ct));
+ const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b(e.salt),iterations:e.iter,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
+ const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b(e.iv)},key,b(e.ct));
  return JSON.parse(new TextDecoder().decode(pt));
 }
+async function decryptData(pass){
+ if(!ENC){const r=await fetch('data.enc.json',{cache:'no-store'});if(!r.ok)throw new Error('fetch');ENC=await r.json();}
+ return decryptObj(pass,ENC);
+}
+/* ---------- live sync ---------- */
+let SYNCING=false;
+function toast(msg,err){const t=document.createElement('div');t.textContent=msg;
+t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:'+(err?'#df3f66':'#0e1626')+';color:#fff;padding:11px 20px;border-radius:30px;font-size:13.5px;font-weight:600;z-index:99;box-shadow:0 10px 30px rgba(14,22,38,.35);opacity:0;transition:opacity .25s';
+document.body.appendChild(t);requestAnimationFrame(()=>t.style.opacity='1');
+setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},2600)}
+async function checkUpdate(manual){
+ if(!S.unlocked||!PASS||SYNCING)return;
+ SYNCING=true;const ic=document.getElementById('syncIcon');if(ic)ic.style.animation='spin 1s linear infinite';
+ try{
+  const r=await fetch('data.enc.json',{cache:'no-store'});if(!r.ok)throw new Error('fetch');
+  const j=await r.json();
+  if(!ENC||j.ct!==ENC.ct){
+   const d=await decryptObj(PASS,j);
+   ENC=j;initData(d);LASTSYNC=new Date();render();toast('✓ Naya data aa gaya');
+  }else{LASTSYNC=new Date();if(manual)toast('Data already latest hai');else{const el=document.getElementById('synct');if(el)el.textContent=syncLabel()}}
+ }catch(e){if(manual)toast('Update check fail hua — net check karo',true)}
+ SYNCING=false;const ic2=document.getElementById('syncIcon');if(ic2)ic2.style.animation='';
+}
+const syncLabel=()=>LASTSYNC?'sync '+LASTSYNC.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'';
+setInterval(()=>{if(document.visibilityState==='visible')checkUpdate(false)},60000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkUpdate(false)});
 
 function balTag(b){if(Math.round(b)===0)return `<span class="badge" style="color:var(--sub);background:var(--chip)">Settled</span>`;
 if(b>0)return `<span class="badge" style="color:var(--red);background:var(--redSoft)">Due ${inr(b)}</span>`;
@@ -113,7 +147,7 @@ const lockBadge=`<span class="badge" style="color:var(--sub);background:var(--ch
 /* ---------- inactivity timers (throttled — scroll jank na ho) ---------- */
 let lockT,bhupT,lastAct=0;
 function armTimers(){clearTimeout(lockT);clearTimeout(bhupT);
-if(S.unlocked)lockT=setTimeout(()=>{S.unlocked=false;S.bhup=false;S.modal=null;render()},300000);
+if(S.unlocked)lockT=setTimeout(()=>{S.unlocked=false;S.bhup=false;S.modal=null;PASS=null;render()},300000);
 if(S.bhup)bhupT=setTimeout(()=>{S.bhup=false;if(S.modal==='bhupnote')S.modal=null;render()},30000)}
 function activity(){const n=performance.now();if(n-lastAct>1500){lastAct=n;armTimers()}}
 ['mousedown','keydown','touchstart','click'].forEach(ev=>window.addEventListener(ev,activity,{passive:true}));
@@ -122,7 +156,8 @@ window.addEventListener('scroll',activity,{passive:true,capture:true});
 /* ---------- actions ---------- */
 const A={
 go(t){S.tab=t;render();window.scrollTo(0,0)},
-async tryApp(){const v=document.getElementById('apppin').value;try{const d=await decryptData(v);initData(d);S.unlocked=true;S.pinErr=false}catch(e){S.pinErr=true}render()},
+async tryApp(){const v=document.getElementById('apppin').value;try{const d=await decryptData(v);initData(d);S.unlocked=true;S.pinErr=false;PASS=v;LASTSYNC=new Date()}catch(e){S.pinErr=true}render()},
+refreshData(){checkUpdate(true)},
 tryBhup(){const v=document.getElementById('bpin').value;if(v===BHUP_PIN){S.bhup=true;S.pinErr=false;S.modal='bhupnote'}else{S.pinErr=true}render()},
 bhupBtn(){S.pinErr=false;S.modal=S.bhup?'bhupnote':'bhuppin';render()},
 hideBhup(){S.bhup=false;render()},
@@ -164,8 +199,9 @@ function header(){return `
  <div class="hrow">
   <div class="logo disp">T</div>
   <div><div class="htitle disp">Teckno Salary Tracker <span class="badge" style="background:var(--teal);color:#06302b;vertical-align:middle">${VERSION}</span></div>
-  <div class="hsub">FY 2026 · ${DATA.employees.length} staff · ${DATA.ledger.length} txns · data: ${DATA_AS_OF}</div></div>
+  <div class="hsub">FY 2026 · ${DATA.employees.length} staff · ${DATA.ledger.length} txns · data: ${asOfStr()}<span id="synct" style="margin-left:7px;color:var(--teal)">${syncLabel()}</span></div></div>
   <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+   <button class="hbtn" title="Refresh data" onclick="A.refreshData()"><svg id="syncIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button>
    <button class="hbtn" onclick="A.bhupBtn()">${S.bhup?svgNote():svgLock()} Bhupendra</button>
    ${S.bhup?`<button class="hbtn" title="Hide" onclick="A.hideBhup()"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61"/></svg></button>`:''}
    <button class="hbtn" onclick="A.modal('rules')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="16" y2="7"/><line x1="9" y1="11" x2="16" y2="11"/></svg></button>
@@ -451,7 +487,7 @@ const RULES=[
 {title:"Priyanka — Special Case",color:"#df3f66",items:["Priyanka (Inactive) ko har mahine ₹18,000 payment jayega jab tak uska account settle na ho (2 Aug 2026 se; pehle ₹15,000 tha).","Uska poora due kabhi ek saath Upcoming mein nahi dalega — sirf ₹18,000/month."]},
 {title:"Transfer Through Others",color:"#0e9d6a",items:["Jab paisa kisi ek bande ke through doosre ko jaaye (company ki taraf se), sirf actual beneficiary ka account badlega.","Beech wala bande (conduit) ka balance nahi chhedega — woh sirf transfer ka zariya hai."]},
 {title:"Bhupendra — Privacy & Alag Note",color:"#0e1626",items:["Bhupendra ki saari salary/amounts pure tracker mein by default HIDDEN rehti hain (Staff, Payments, Upcoming, Dashboard — sab jagah •••••• masked).","Header ke 'Bhupendra' (lock) button se PIN daal ke hi uska data reveal hota hai.","Reveal ke baad: 30 second tak koi activity na ho (click/scroll/type/mouse) toh data apne aap wapas hide ho jata hai. Activity pe timer reset.","Manual hide ke liye eye-off button bhi hai.","Bhupendra ka ek ALAG note hai (sirf uske PIN se) — main tracker se alag, manual. Salary ₹1,50,000 vs jo amount uske paas aaya, pending dikhata hai.","Bhupendra ka koi bhi payment DONO jagah add hota hai — main ledger + alag note.","Bhupendra ko har month full salary ka payment lagta rahega (advance hone par bhi) jab tak Sir ji na bolein.","WhatsApp monthly summary mein Bhupendra kabhi nahi aata."]},
-{title:"Data & Maintenance",color:"#647184",items:["Ye viewer read-only hai — master data Claude (Cowork) ke paas ek file mein hai, audit-verified.","Sir ji UI mein khud edit nahi karte — update Claude ko chat mein batate hain, Claude data file update karke naya tracker bana deta hai.","Har update pe Claude balances recompute + audit karta hai — koi manual calculation nahi.","DATE RULE: Koi bhi entry/update se PEHLE Claude hamesha actual system date se cross-verify karega — conversation se assume nahi karega."]}];
+{title:"Data & Maintenance",color:"#647184",items:["Ye viewer read-only hai — master data Claude (Cowork) ke paas ek file mein hai, audit-verified.","Auto-update: tracker har minute + window pe wapas aate hi naya data khud check karta hai. Header ka ⟳ button turant check karta hai.","Sir ji UI mein khud edit nahi karte — update Claude ko chat mein batate hain, Claude data file update karke naya tracker bana deta hai.","Har update pe Claude balances recompute + audit karta hai — koi manual calculation nahi.","DATE RULE: Koi bhi entry/update se PEHLE Claude hamesha actual system date se cross-verify karega — conversation se assume nahi karega."]}];
 
 function rulesModal(){return `<div class="overlay" onclick="A.modal(null)"><div class="modal" style="max-width:620px" onclick="event.stopPropagation()">
  <div style="display:flex;align-items:center;margin-bottom:12px"><div class="mtitle disp">Tracker Rules</div><button class="xbtn" onclick="A.modal(null)">×</button></div>
@@ -525,7 +561,7 @@ else if(S.modal==='bhuppin')modal=bhupPinModal();
 else if(S.modal==='bhupnote')modal=bhupNoteModal();
 else if(S.modal==='statement')modal=stmtModal();
 app.innerHTML=header()+`<div class="wrap" id="view">${view()}</div>
-<div class="footer">Read-only viewer · ${VERSION} · Data as of ${DATA_AS_OF} · Audit-verified ✓<br>Update Claude ko chat mein batao — push hote hi yahan refresh pe dikh jayega.</div>`+modal;
+<div class="footer">Read-only viewer · ${VERSION} · Data as of ${asOfStr()} · Audit-verified ✓<br>Update Claude ko chat mein batao — push hote hi tracker khud update ho jayega (har minute auto-check + ⟳ button).</div>`+modal;
 window.scrollTo(0,y);
 if(S.modal==='bhuppin'){const p=document.getElementById('bpin');if(p)p.focus()}
 armTimers()}
