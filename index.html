@@ -82,7 +82,7 @@ let ENC=null;
 let PASS=null;
 let LASTSYNC=null;
 const BHUP_PIN="2611", MASK="••••••", BHUP_ID="FEBM303";
-const VERSION="v10";
+const VERSION="v10.1";
 const DATA_AS_OF = "12 Aug 2026";
 const asOfStr=()=>DATA&&DATA.asOf?fdate(DATA.asOf):DATA_AS_OF;
 
@@ -162,6 +162,11 @@ const q=qNorm(raw);
 if(has(q,['help','madad','kya pooch','kya puch','examples']))return ansCard('Aise poochho: <b>Jitendra ka balance</b> · <b>July me kitna paid hua</b> · <b>total kitna dena hai</b> · <b>is month kitna cash chahiye</b> · <b>Priyanka kab settle hogi</b> · <b>kiska advance hai</b> · <b>Harshit ko July me kitna diya</b>');
 const emp=qEmp(q), mk=qMonth(q);
 const wantPaid=has(q,['paid','diya','diye','payment','mila','pay']),wantAcc=has(q,['accrued','bana','bani','cost','kharcha','kharch']),wantBal=has(q,['balance','baki','baaki','due','dena','bacha']),wantSal=has(q,['salary','tankha']);
+/* "X se kitna aaya" — us bande se aaya funding */
+if(emp&&(DATA.funding||[]).some(f=>f.fromId===emp.id)&&(has(q,['aaya','aaye','aya','mila','mile','received','se'])||(has(q,['ne'])&&has(q,['diya','diye','de'])))&&!has(q,['ko','balance','due','dena','salary'])){
+ const fs=(DATA.funding||[]).filter(f=>f.fromId===emp.id).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+ const tot=fs.reduce((s,f)=>s+(+f.amount||0),0);
+ return ansCard(`<b>${esc(emp.name)} se aaya cash: ${inr(tot)}</b><br>`+fs.map(f=>`• ${fdate(f.date)}: ${inr(f.amount)}${f.method?' ('+esc(f.method)+')':''}`).join('<br>')+`<br><span style="color:var(--sub)">Company funding — kisi ke balance me nahi jata.</span>`)}
 /* person + month */
 if(emp&&mk){if(hideB(emp.id))return lockAns();
  let p=0,a=0;DATA.ledger.forEach(t=>{if(t.empId===emp.id&&t.month===mk){t.direction==='-'?p+=Math.abs(t.amount):a+=Math.abs(t.amount)}});
@@ -178,6 +183,10 @@ if(emp){if(hideB(emp.id))return lockAns();
  if(wantAcc&&!wantBal)return ansCard(`<b>${esc(emp.name)}</b> ka ab tak total accrued (bana): <b style="color:var(--blue)">${inr(s.acc)}</b>`);
  const st=Math.round(s.bal)===0?'<b style="color:var(--green)">Settled ✓</b>':s.bal>0?`<b style="color:var(--red)">Due ${inr(s.bal)}</b> (company ko dena hai)`:`<b style="color:var(--green)">Advance ${inr(-s.bal)}</b> (usne zyada le rakha hai)`;
  return ansCard(`<b>${esc(emp.name)}</b> (${emp.id} · ${emp.type}${emp.status==='Inactive'?' · Inactive':''})<br>Opening ${inr(s.open)} + Accrued ${inr(s.acc)} − Paid ${inr(s.paid)}<br>Status: ${st}`)}
+/* funding — "kitna cash aaya" (cash/upcoming se PEHLE, warna wo pakad leta hai) */
+if(has(q,['funding','fund'])||(has(q,['aaya','aaye','aya','mila','mile','received'])&&has(q,['cash','paisa','paise','kitna','kitne','rupay','total']))){
+ const fs=DATA.funding||[];if(!fs.length)return ansCard('Abhi tak koi funding (aaya hua cash) record nahi hai.');
+ return ansCard(`<b>Cash aaya (company funding): ${inr(fundTotal())}</b><br>`+fs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(f=>`• ${fdate(f.date)} — ${esc(f.from)}: ${inr(f.amount)}`).join('<br>')+`<br><span style="color:var(--sub)">Ye kisi ke balance/due me nahi jata.</span>`)}
 /* cash / upcoming (month se pehle — "is month kitna cash" jaise sawaal) */
 if(has(q,['cash','lagega','chahiye','upcoming','aane'])){const up=DATA.upcoming||[];const cash=up.filter(u=>u.cash).reduce((s,u)=>s+(+u.amount||0),0);
  const rows=up.map(u=>hideB(u.empId)?`• ${esc(u.empName)}: 🔒`:`• ${esc(u.empName)}: ${inr(u.amount)}${u.cash?'':' (no cash)'}`).join('<br>');
@@ -306,7 +315,21 @@ ${statCard('Active Staff',fx+fr,'var(--ink)','Fixed '+fx+' · Freelance '+fr)}
  <div style="display:flex;gap:18px;margin-top:14px;font-size:12px;color:var(--sub)">
   <span><span style="display:inline-block;width:10px;height:10px;background:var(--blue);border-radius:3px;margin-right:6px"></span>Accrued</span>
   <span><span style="display:inline-block;width:10px;height:10px;background:var(--primary);border-radius:3px;margin-right:6px"></span>Paid</span></div></div>
+${fundCard()}
 <div class="card" style="padding-bottom:6px"><div class="ctitle disp">Outstanding Balances</div>${out}</div>`}
+
+/* Cash Received — company funding (kisi ke balance me nahi jata) */
+function fundTotal(){return (DATA.funding||[]).reduce((s,f)=>s+(+f.amount||0),0)}
+function fundCard(){const fs=DATA.funding||[];if(!fs.length)return'';
+const rows=fs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(f=>`<div class="trow">
+ <div style="width:82px;font-size:12px;color:var(--sub);flex-shrink:0">${fdate(f.date)}</div>
+ <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">${esc(f.from)}${f.method?` <span class="badge" style="color:var(--sub);background:var(--chip)">${esc(f.method)}</span>`:''}</div>
+ <div style="font-size:12px;color:var(--sub)">${esc(f.note||'')}</div></div>
+ <div style="font-weight:700;color:var(--green);white-space:nowrap">+ ${inr(f.amount)}</div></div>`).join('');
+return `<div class="card" style="padding-bottom:6px"><div class="ctitle disp">Cash Received <span class="note" style="font-weight:400">— company funding</span>
+ <span class="badge" style="background:var(--greenSoft);color:var(--green);margin-left:6px">Total ${inr(fundTotal())}</span></div>
+ <div class="note" style="margin-bottom:2px">Ye company ka aaya hua cash hai (staff ko baantne ke liye) — kisi ke balance/due me nahi jata.</div>
+ ${rows}</div>`}
 
 function staff(){
 const emps=DATA.employees.filter(e=>{
@@ -553,6 +576,7 @@ const RULES=[
 {title:"Upcoming Payments",color:"#7c3aed",items:["Upcoming = jo payments aane wale hain par abhi ledger mein post nahi hue.","Isme aata hai: fixed staff ki month-end pe banne wali salary + freelancers ki bani hui cost.","Freelancer ki jo bhi cost banegi, woh HAMESHA Upcoming mein add hogi.","Har bande ka purana/pending due bhi Upcoming mein dikhega (sirf is mahine ka nahi).","Cash flag: 'no cash' wale items advance se adjust hote hain — actual paisa nahi jaata.","Bhupendra ko bhi har month salary ka full payment lagta rahega (advance hone par bhi) jab tak Sir ji na bolein — uski salary bhi Upcoming mein cash payment ke roop mein add hogi.","Jab actual payment/salary ho jaye, Claude use Upcoming se hata ke Payments (ledger) mein daal dega."]},
 {title:"Priyanka — Special Case",color:"#df3f66",items:["Priyanka (Inactive) ko har mahine ₹18,000 payment jayega jab tak uska account settle na ho (2 Aug 2026 se; pehle ₹15,000 tha).","Uska poora due kabhi ek saath Upcoming mein nahi dalega — sirf ₹18,000/month."]},
 {title:"Transfer Through Others",color:"#0e9d6a",items:["Jab paisa kisi ek bande ke through doosre ko jaaye (company ki taraf se), sirf actual beneficiary ka account badlega.","Beech wala bande (conduit) ka balance nahi chhedega — woh sirf transfer ka zariya hai."]},
+{title:"Cash Received — Company Funding",color:"#0e9d6a",items:["Sitaram (FESY101) company ka cash source hai — unka apna koi salary/ledger hisaab nahi chalta, balance hamesha ₹0.","Sitaram se jo paisa aata hai wo COMPANY ka cash hai (staff ko baantne ke liye) — Dashboard ke 'Cash Received' card me record hota hai.","Ye funding kisi ke balance/due/net total me NAHI judta — sirf record ke liye hai.","Agar kabhi Sir ji bolein ki kisi ka paisa wapas dena hai, tab alag se uska ledger entry banega."]},
 {title:"Bhupendra — Privacy & Alag Note",color:"#0e1626",items:["Bhupendra ki saari salary/amounts pure tracker mein by default HIDDEN rehti hain (Staff, Payments, Upcoming, Dashboard — sab jagah •••••• masked).","Header ke 'Bhupendra' (lock) button se PIN daal ke hi uska data reveal hota hai.","Reveal ke baad: 30 second tak koi activity na ho (click/scroll/type/mouse) toh data apne aap wapas hide ho jata hai. Activity pe timer reset.","Manual hide ke liye eye-off button bhi hai.","Bhupendra ka ek ALAG note hai (sirf uske PIN se) — main tracker se alag, manual. Salary ₹1,50,000 vs jo amount uske paas aaya, pending dikhata hai.","Bhupendra ka koi bhi payment DONO jagah add hota hai — main ledger + alag note.","Bhupendra ko har month full salary ka payment lagta rahega (advance hone par bhi) jab tak Sir ji na bolein.","WhatsApp monthly summary mein Bhupendra kabhi nahi aata."]},
 {title:"Data & Maintenance",color:"#647184",items:["Ye viewer read-only hai — master data Claude (Cowork) ke paas ek file mein hai, audit-verified.","Auto-update: tracker har minute + window pe wapas aate hi naya data khud check karta hai. Header ka ⟳ button turant check karta hai.","✨ Ask button: balance, months, dues, cash jaise sawaal tracker ke andar hi poochho — sab offline calculate hota hai. Complex sawaal Claude se chat mein.","Sir ji UI mein khud edit nahi karte — update Claude ko chat mein batate hain, Claude data file update karke naya tracker bana deta hai.","Har update pe Claude balances recompute + audit karta hai — koi manual calculation nahi.","DATE RULE: Koi bhi entry/update se PEHLE Claude hamesha actual system date se cross-verify karega — conversation se assume nahi karega."]}];
 
