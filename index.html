@@ -110,7 +110,9 @@ async function decryptObj(pass,e){
  const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pass),'PBKDF2',false,['deriveKey']);
  const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b(e.salt),iterations:e.iter,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b(e.iv)},key,b(e.ct));
- return JSON.parse(new TextDecoder().decode(pt));
+ let bytes=new Uint8Array(pt);
+ if(e.c==='gzip'){const st=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));bytes=new Uint8Array(await new Response(st).arrayBuffer());}
+ return JSON.parse(new TextDecoder().decode(bytes));
 }
 async function decryptData(pass){
  if(!ENC){const r=await fetch('data.enc.json',{cache:'no-store'});if(!r.ok)throw new Error('fetch');ENC=await r.json();}
