@@ -626,10 +626,17 @@ const n=DATA.bhupendra||{salary:0,received:[],fronted:[],memos:[]};
 const rec=(n.received||[]).reduce((s,r)=>s+(+r.amount||0),0);
 const fr=(n.fronted||[]).reduce((s,r)=>s+(+r.amount||0),0);
 const pend=(+n.salary||0)+fr-rec;
+const memos=n.memos||[];
+const hasCalc=!!((+n.salary||0)||(n.received||[]).length||(n.fronted||[]).length);
+const memoRows=memos.length?`<div style="background:var(--panelAlt);border:1px dashed var(--line);border-radius:12px;overflow:hidden">
+  ${memos.map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:11px 13px;border-bottom:1px solid var(--line)">
+   <span style="flex:1;font-size:13.5px;color:var(--sub)">${esc(r.label)}</span>
+   <span class="disp" style="font-weight:700;color:var(--sub);white-space:nowrap">${inr(r.amount)}</span></div>`).join('')}</div>`
+ :'<div class="note" style="padding:10px 0">Koi item nahi.</div>';
 return `<div class="overlay" onclick="A.modal(null)"><div class="modal" style="max-width:540px" onclick="event.stopPropagation()">
- <div style="display:flex;align-items:center;margin-bottom:4px"><div class="mtitle disp">Bhupendra — Alag Calculation</div><button class="xbtn" onclick="A.modal(null)">×</button></div>
- <div class="note" style="margin-bottom:16px">Ye main tracker se alag hai — sirf Sir ji ke bataye hisaab se chalti hai. Purana ledger isme nahi aata.</div>
- <div style="background:var(--blueSoft);border-radius:14px;padding:13px 15px;margin-bottom:15px;display:flex;align-items:center">
+ <div style="display:flex;align-items:center;margin-bottom:4px"><div class="mtitle disp">${hasCalc?'Bhupendra — Alag Calculation':'Bhupendra — Alag Items'}</div><button class="xbtn" onclick="A.modal(null)">×</button></div>
+ <div class="note" style="margin-bottom:16px">${hasCalc?'Ye main tracker se alag hai — sirf Sir ji ke bataye hisaab se chalti hai. Purana ledger isme nahi aata.':'Ye items kisi bhi hisaab/total me nahi jude — sirf record ke liye. Poora hisaab main tracker (ledger) me hai.'}</div>
+ ${hasCalc?`<div style="background:var(--blueSoft);border-radius:14px;padding:13px 15px;margin-bottom:15px;display:flex;align-items:center">
   <span style="font-size:13px;font-weight:600">${(n.month?n.month.split(' ')[0]:'')+' Salary'}</span>
   <span class="disp" style="margin-left:auto;font-weight:800;font-size:21px;color:var(--blue)">${inr(n.salary)}</span></div>
  <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--sub);font-weight:700;margin-bottom:8px">Bhupendra ke paas aaya</div>
@@ -651,12 +658,9 @@ return `<div class="overlay" onclick="A.modal(null)"><div class="modal" style="m
   <div><div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:${pend>0?'var(--red)':'var(--green)'};font-weight:700">Pending</div>
   <div class="note" style="margin-top:2px">${(n.fronted&&n.fronted.length)?'Salary + maine diya − jo aaya':'Salary − jo aaya'}</div></div>
   <span class="disp" style="margin-left:auto;font-weight:800;font-size:25px;color:${pend>0?'var(--red)':'var(--green)'}">${inr(pend)}</span></div>
- ${(n.memos&&n.memos.length)?`<div style="margin-top:15px">
+ <div style="margin-top:15px">
   <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--sub);font-weight:700;margin-bottom:8px">Alag items (kisi total me nahi)</div>
-  <div style="background:var(--panelAlt);border:1px dashed var(--line);border-radius:12px;overflow:hidden">
-  ${n.memos.map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid var(--line)">
-   <span style="flex:1;font-size:13px;color:var(--sub)">${esc(r.label)}</span>
-   <span style="font-weight:700;color:var(--sub);white-space:nowrap">${inr(r.amount)}</span></div>`).join('')}</div></div>`:''}
+  ${memoRows}</div>`:memoRows}
 </div></div>`}
 
 /* ---------- root render ---------- */
